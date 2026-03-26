@@ -29,11 +29,16 @@ print_error() { echo -e "${RED}✗ $1${NC}"; }
 print_warning() { echo -e "${YELLOW}⚠ $1${NC}"; }
 print_info() { echo -e "${BLUE}ℹ $1${NC}"; }
 
+# Portable lowercase conversion (works on Bash 3.2+ and all Linux)
+to_lower() {
+    echo "$1" | tr '[:upper:]' '[:lower:]'
+}
+
 # Display banner
 show_banner() {
     clear
     echo "╔════════════════════════════════════════════════════════════╗"
-    echo "║        Hostname Manager for macOS /etc/hosts              ║"
+    echo "║        Hostname Manager for macOS /etc/hosts               ║"
     echo "║                  by thienhaxanh2405                        ║"
     echo "╚════════════════════════════════════════════════════════════╝"
     echo ""
@@ -101,7 +106,7 @@ is_reserved_name() {
     local reserved=("localhost" "broadcasthost" "localhost.localdomain")
 
     for reserved_name in "${reserved[@]}"; do
-        if [[ "${hostname,,}" == "${reserved_name,,}" ]]; then
+        if [[ "$(to_lower "$hostname")" == "$(to_lower "$reserved_name")" ]]; then
             return 0
         fi
     done
@@ -140,15 +145,22 @@ flush_dns() {
 
 # Read /etc/hosts into array
 read_hosts() {
-    mapfile -t hosts_content < /etc/hosts
+    hosts_content=()
+    while IFS= read -r line; do
+        hosts_content+=("$line")
+    done < /etc/hosts
 }
 
 # Write hosts content atomically
 write_hosts() {
     local temp_file="/tmp/hosts.tmp.$$"
 
-    # Write to temp file
-    printf "%s\n" "${hosts_content[@]}" > "$temp_file"
+    # Write to temp file (safe for empty array)
+    if [[ ${#hosts_content[@]} -gt 0 ]]; then
+        printf "%s\n" "${hosts_content[@]}" > "$temp_file"
+    else
+        : > "$temp_file"  # Create empty file
+    fi
 
     # Atomic move
     if sudo mv "$temp_file" /etc/hosts 2>/dev/null; then
@@ -173,15 +185,18 @@ find_block() {
     block_end_idx=-1
 
     local idx=0
-    for line in "${hosts_content[@]}"; do
-        if [[ "$line" == "$BLOCK_START" ]]; then
-            block_start_idx=$idx
-        elif [[ "$line" == "$BLOCK_END" ]]; then
-            block_end_idx=$idx
-            return 0
-        fi
-        ((idx++))
-    done
+    # Safe array iteration for set -u
+    if [[ ${#hosts_content[@]} -gt 0 ]]; then
+        for line in "${hosts_content[@]}"; do
+            if [[ "$line" == "$BLOCK_START" ]]; then
+                block_start_idx=$idx
+            elif [[ "$line" == "$BLOCK_END" ]]; then
+                block_end_idx=$idx
+                return 0
+            fi
+            ((idx++))
+        done
+    fi
 
     return 1
 }
@@ -190,12 +205,17 @@ find_block() {
 create_block() {
     local new_content=()
 
-    # Copy existing content
-    new_content=("${hosts_content[@]}")
+    # Copy existing content (safe for empty array)
+    if [[ ${#hosts_content[@]} -gt 0 ]]; then
+        new_content=("${hosts_content[@]}")
+    fi
 
     # Add empty line if file doesn't end with one
-    if [[ ${#new_content[@]} -gt 0 && -n "${new_content[-1]}" ]]; then
-        new_content+=("")
+    if [[ ${#new_content[@]} -gt 0 ]]; then
+        local last_idx=$((${#new_content[@]} - 1))
+        if [[ -n "${new_content[$last_idx]}" ]]; then
+            new_content+=("")
+        fi
     fi
 
     # Add block markers
@@ -209,8 +229,8 @@ create_block() {
 
 # Get entries from customize block
 get_block_entries() {
-    local -n entries_ref=$1
-    entries_ref=()
+    local var_name=$1
+    eval "$var_name=()"
 
     if ! find_block; then
         return 1
@@ -221,7 +241,7 @@ get_block_entries() {
         local line="${hosts_content[$idx]}"
         # Skip empty lines and comments
         if [[ -n "$line" && ! "$line" =~ ^[[:space:]]*# ]]; then
-            entries_ref+=("$line")
+            eval "$var_name+=(\"\$line\")"
         fi
         ((idx++))
     done
@@ -231,7 +251,7 @@ get_block_entries() {
 
 # Update block with new entries
 update_block() {
-    local -n new_entries_ref=$1
+    local var_name=$1
 
     if ! find_block; then
         create_block
@@ -251,10 +271,14 @@ update_block() {
     # Add block start marker
     new_content+=("$BLOCK_START")
 
-    # Add entries
-    for entry in "${new_entries_ref[@]}"; do
-        new_content+=("$entry")
-    done
+    # Add entries using eval to access the array by name (safe for empty arrays)
+    eval "
+    if [[ \${#${var_name}[@]} -gt 0 ]]; then
+        for entry in \"\${${var_name}[@]}\"; do
+            new_content+=(\"\$entry\")
+        done
+    fi
+    "
 
     # Add block end marker
     new_content+=("$BLOCK_END")
@@ -318,7 +342,7 @@ menu_add() {
     # Ask for backup confirmation
     echo ""
     read -p "Create backup before adding? (y/n): " backup_choice
-    if [[ "${backup_choice,,}" == "y" ]]; then
+    if [[ "$(to_lower "$backup_choice")" == "y" ]]; then
         if ! backup_hosts; then
             print_error "Backup failed. Aborting."
             return 1
@@ -334,30 +358,34 @@ menu_add() {
 
     # Check for duplicate hostname
     local found=false
-    for entry in "${entries[@]}"; do
-        local entry_hostname=$(echo "$entry" | awk '{print $2}')
-        if [[ "${entry_hostname,,}" == "${hostname,,}" ]]; then
-            print_warning "Hostname '$hostname' already exists"
-            found=true
-            break
-        fi
-    done
+    if [[ ${#entries[@]} -gt 0 ]]; then
+        for entry in "${entries[@]}"; do
+            local entry_hostname=$(echo "$entry" | awk '{print $2}')
+            if [[ "$(to_lower "$entry_hostname")" == "$(to_lower "$hostname")" ]]; then
+                print_warning "Hostname '$hostname' already exists"
+                found=true
+                break
+            fi
+        done
+    fi
 
     if [[ "$found" == true ]]; then
         read -p "Overwrite existing entry? (y/n): " overwrite_choice
-        if [[ "${overwrite_choice,,}" != "y" ]]; then
+        if [[ "$(to_lower "$overwrite_choice")" != "y" ]]; then
             print_info "Add cancelled"
             return 0
         fi
 
         # Remove old entry
         local new_entries=()
-        for entry in "${entries[@]}"; do
-            local entry_hostname=$(echo "$entry" | awk '{print $2}')
-            if [[ "${entry_hostname,,}" != "${hostname,,}" ]]; then
-                new_entries+=("$entry")
-            fi
-        done
+        if [[ ${#entries[@]} -gt 0 ]]; then
+            for entry in "${entries[@]}"; do
+                local entry_hostname=$(echo "$entry" | awk '{print $2}')
+                if [[ "$(to_lower "$entry_hostname")" != "$(to_lower "$hostname")" ]]; then
+                    new_entries+=("$entry")
+                fi
+            done
+        fi
         entries=("${new_entries[@]}")
     fi
 
@@ -411,7 +439,7 @@ menu_search() {
         local entry_ip=$(echo "$entry" | awk '{print $1}')
         local entry_hostname=$(echo "$entry" | awk '{print $2}')
 
-        if [[ "${entry_hostname,,}" == "${hostname,,}" ]]; then
+        if [[ "$(to_lower "$entry_hostname")" == "$(to_lower "$hostname")" ]]; then
             echo ""
             print_success "Found: $entry_hostname -> $entry_ip"
             found=true
@@ -452,16 +480,18 @@ menu_edit() {
     # Find hostname
     local found=false
     local old_ip=""
-    for entry in "${entries[@]}"; do
-        local entry_ip=$(echo "$entry" | awk '{print $1}')
-        local entry_hostname=$(echo "$entry" | awk '{print $2}')
+    if [[ ${#entries[@]} -gt 0 ]]; then
+        for entry in "${entries[@]}"; do
+            local entry_ip=$(echo "$entry" | awk '{print $1}')
+            local entry_hostname=$(echo "$entry" | awk '{print $2}')
 
-        if [[ "${entry_hostname,,}" == "${hostname,,}" ]]; then
-            old_ip="$entry_ip"
-            found=true
-            break
-        fi
-    done
+            if [[ "$(to_lower "$entry_hostname")" == "$(to_lower "$hostname")" ]]; then
+                old_ip="$entry_ip"
+                found=true
+                break
+            fi
+        done
+    fi
 
     if [[ "$found" == false ]]; then
         print_warning "Hostname '$hostname' not found"
@@ -487,7 +517,7 @@ menu_edit() {
     # Ask for backup confirmation
     echo ""
     read -p "Create backup before editing? (y/n): " backup_choice
-    if [[ "${backup_choice,,}" == "y" ]]; then
+    if [[ "$(to_lower "$backup_choice")" == "y" ]]; then
         if ! backup_hosts; then
             print_error "Backup failed. Aborting."
             return 1
@@ -496,16 +526,18 @@ menu_edit() {
 
     # Update entry
     local new_entries=()
-    for entry in "${entries[@]}"; do
-        local entry_ip=$(echo "$entry" | awk '{print $1}')
-        local entry_hostname=$(echo "$entry" | awk '{print $2}')
+    if [[ ${#entries[@]} -gt 0 ]]; then
+        for entry in "${entries[@]}"; do
+            local entry_ip=$(echo "$entry" | awk '{print $1}')
+            local entry_hostname=$(echo "$entry" | awk '{print $2}')
 
-        if [[ "${entry_hostname,,}" == "${hostname,,}" ]]; then
-            new_entries+=("$new_ip    $entry_hostname")
-        else
-            new_entries+=("$entry")
-        fi
-    done
+            if [[ "$(to_lower "$entry_hostname")" == "$(to_lower "$hostname")" ]]; then
+                new_entries+=("$new_ip    $entry_hostname")
+            else
+                new_entries+=("$entry")
+            fi
+        done
+    fi
 
     # Update block
     update_block new_entries
@@ -546,16 +578,18 @@ menu_delete() {
     # Find hostname
     local found=false
     local delete_ip=""
-    for entry in "${entries[@]}"; do
-        local entry_ip=$(echo "$entry" | awk '{print $1}')
-        local entry_hostname=$(echo "$entry" | awk '{print $2}')
+    if [[ ${#entries[@]} -gt 0 ]]; then
+        for entry in "${entries[@]}"; do
+            local entry_ip=$(echo "$entry" | awk '{print $1}')
+            local entry_hostname=$(echo "$entry" | awk '{print $2}')
 
-        if [[ "${entry_hostname,,}" == "${hostname,,}" ]]; then
-            delete_ip="$entry_ip"
-            found=true
-            break
-        fi
-    done
+            if [[ "$(to_lower "$entry_hostname")" == "$(to_lower "$hostname")" ]]; then
+                delete_ip="$entry_ip"
+                found=true
+                break
+            fi
+        done
+    fi
 
     if [[ "$found" == false ]]; then
         print_warning "Hostname '$hostname' not found"
@@ -566,14 +600,14 @@ menu_delete() {
     echo ""
     print_warning "Will delete: $hostname -> $delete_ip"
     read -p "Are you sure? (y/n): " confirm_choice
-    if [[ "${confirm_choice,,}" != "y" ]]; then
+    if [[ "$(to_lower "$confirm_choice")" != "y" ]]; then
         print_info "Deletion cancelled"
         return 0
     fi
 
     # Ask for backup confirmation
     read -p "Create backup before deleting? (y/n): " backup_choice
-    if [[ "${backup_choice,,}" == "y" ]]; then
+    if [[ "$(to_lower "$backup_choice")" == "y" ]]; then
         if ! backup_hosts; then
             print_error "Backup failed. Aborting."
             return 1
@@ -582,12 +616,14 @@ menu_delete() {
 
     # Remove entry
     local new_entries=()
-    for entry in "${entries[@]}"; do
-        local entry_hostname=$(echo "$entry" | awk '{print $2}')
-        if [[ "${entry_hostname,,}" != "${hostname,,}" ]]; then
-            new_entries+=("$entry")
-        fi
-    done
+    if [[ ${#entries[@]} -gt 0 ]]; then
+        for entry in "${entries[@]}"; do
+            local entry_hostname=$(echo "$entry" | awk '{print $2}')
+            if [[ "$(to_lower "$entry_hostname")" != "$(to_lower "$hostname")" ]]; then
+                new_entries+=("$entry")
+            fi
+        done
+    fi
 
     # Update block
     update_block new_entries
@@ -629,10 +665,12 @@ menu_import() {
 
     # Build hostname lookup for duplicates
     declare -A existing_hostnames
-    for entry in "${entries[@]}"; do
-        local entry_hostname=$(echo "$entry" | awk '{print $2}')
-        existing_hostnames["${entry_hostname,,}"]="$entry"
-    done
+    if [[ ${#entries[@]} -gt 0 ]]; then
+        for entry in "${entries[@]}"; do
+            local entry_hostname=$(echo "$entry" | awk '{print $2}')
+            existing_hostnames["$(to_lower "$entry_hostname")"]="$entry"
+        done
+    fi
 
     # Statistics
     local added=0
@@ -643,7 +681,7 @@ menu_import() {
     # Ask for backup confirmation
     echo ""
     read -p "Create backup before importing? (y/n): " backup_choice
-    if [[ "${backup_choice,,}" == "y" ]]; then
+    if [[ "$(to_lower "$backup_choice")" == "y" ]]; then
         if ! backup_hosts; then
             print_error "Backup failed. Aborting."
             return 1
@@ -656,7 +694,7 @@ menu_import() {
         ((line_num++))
 
         # Skip header row
-        if [[ $line_num -eq 1 && "${hostname,,}" == "hostname" ]]; then
+        if [[ $line_num -eq 1 && "$(to_lower "$hostname")" == "hostname" ]]; then
             continue
         fi
 
@@ -691,7 +729,7 @@ menu_import() {
         fi
 
         # Check for duplicate
-        if [[ -n "${existing_hostnames[${hostname,,}]}" ]]; then
+        if [[ -n "${existing_hostnames[$(to_lower "$hostname")]}" ]]; then
             if [[ "$skip_all" == true ]]; then
                 print_info "Skipping duplicate: $hostname"
                 ((skipped++))
@@ -700,23 +738,25 @@ menu_import() {
 
             echo ""
             print_warning "Duplicate found: $hostname already exists"
-            echo "Current: ${existing_hostnames[${hostname,,}]}"
+            echo "Current: ${existing_hostnames[$(to_lower "$hostname")]}"
             echo "New:     $ip    $hostname"
             read -p "Choose action: [O]verwrite / [S]kip / Skip [A]ll remaining? (o/s/a): " dup_choice
 
-            case "${dup_choice,,}" in
+            case "$(to_lower "$dup_choice")" in
                 o)
                     # Remove old entry
                     local new_entries=()
-                    for entry in "${entries[@]}"; do
-                        local entry_hostname=$(echo "$entry" | awk '{print $2}')
-                        if [[ "${entry_hostname,,}" != "${hostname,,}" ]]; then
-                            new_entries+=("$entry")
-                        fi
-                    done
+                    if [[ ${#entries[@]} -gt 0 ]]; then
+                        for entry in "${entries[@]}"; do
+                            local entry_hostname=$(echo "$entry" | awk '{print $2}')
+                            if [[ "$(to_lower "$entry_hostname")" != "$(to_lower "$hostname")" ]]; then
+                                new_entries+=("$entry")
+                            fi
+                        done
+                    fi
                     entries=("${new_entries[@]}")
                     entries+=("$ip    $hostname")
-                    existing_hostnames["${hostname,,}"]="$ip    $hostname"
+                    existing_hostnames["$(to_lower "$hostname")"]="$ip    $hostname"
                     ((overwritten++))
                     print_success "Overwritten: $hostname -> $ip"
                     ;;
@@ -737,7 +777,7 @@ menu_import() {
         else
             # Add new entry
             entries+=("$ip    $hostname")
-            existing_hostnames["${hostname,,}"]="$ip    $hostname"
+            existing_hostnames["$(to_lower "$hostname")"]="$ip    $hostname"
             ((added++))
             print_success "Added: $hostname -> $ip"
         fi
@@ -781,14 +821,16 @@ menu_clear() {
     fi
 
     echo "Current entries (${#entries[@]} total):"
-    for entry in "${entries[@]}"; do
-        echo "  $entry"
-    done
+    if [[ ${#entries[@]} -gt 0 ]]; then
+        for entry in "${entries[@]}"; do
+            echo "  $entry"
+        done
+    fi
 
     echo ""
     print_warning "This will remove ALL ${#entries[@]} entries from the customize block!"
     read -p "Are you sure? (y/n): " confirm_choice
-    if [[ "${confirm_choice,,}" != "y" ]]; then
+    if [[ "$(to_lower "$confirm_choice")" != "y" ]]; then
         print_info "Clear cancelled"
         return 0
     fi
@@ -796,7 +838,7 @@ menu_clear() {
     # Ask for backup confirmation
     echo ""
     read -p "Create backup before clearing? (y/n): " backup_choice
-    if [[ "${backup_choice,,}" == "y" ]]; then
+    if [[ "$(to_lower "$backup_choice")" == "y" ]]; then
         if ! backup_hosts; then
             print_error "Backup failed. Aborting."
             return 1
