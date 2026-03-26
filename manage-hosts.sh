@@ -663,15 +663,6 @@ menu_import() {
     local entries=()
     get_block_entries entries || true
 
-    # Build hostname lookup for duplicates
-    declare -A existing_hostnames
-    if [[ ${#entries[@]} -gt 0 ]]; then
-        for entry in "${entries[@]}"; do
-            local entry_hostname=$(echo "$entry" | awk '{print $2}')
-            existing_hostnames["$(to_lower "$entry_hostname")"]="$entry"
-        done
-    fi
-
     # Statistics
     local added=0
     local skipped=0
@@ -728,8 +719,21 @@ menu_import() {
             continue
         fi
 
-        # Check for duplicate
-        if [[ -n "${existing_hostnames[$(to_lower "$hostname")]}" ]]; then
+        # Check for duplicate (loop through entries instead of associative array)
+        local duplicate_found=false
+        local duplicate_entry=""
+        if [[ ${#entries[@]} -gt 0 ]]; then
+            for entry in "${entries[@]}"; do
+                local entry_hostname=$(echo "$entry" | awk '{print $2}')
+                if [[ "$(to_lower "$entry_hostname")" == "$(to_lower "$hostname")" ]]; then
+                    duplicate_found=true
+                    duplicate_entry="$entry"
+                    break
+                fi
+            done
+        fi
+
+        if [[ "$duplicate_found" == true ]]; then
             if [[ "$skip_all" == true ]]; then
                 print_info "Skipping duplicate: $hostname"
                 ((skipped++))
@@ -738,7 +742,7 @@ menu_import() {
 
             echo ""
             print_warning "Duplicate found: $hostname already exists"
-            echo "Current: ${existing_hostnames[$(to_lower "$hostname")]}"
+            echo "Current: $duplicate_entry"
             echo "New:     $ip    $hostname"
             read -p "Choose action: [O]verwrite / [S]kip / Skip [A]ll remaining? (o/s/a): " dup_choice
 
@@ -756,7 +760,6 @@ menu_import() {
                     fi
                     entries=("${new_entries[@]}")
                     entries+=("$ip    $hostname")
-                    existing_hostnames["$(to_lower "$hostname")"]="$ip    $hostname"
                     ((overwritten++))
                     print_success "Overwritten: $hostname -> $ip"
                     ;;
@@ -777,7 +780,6 @@ menu_import() {
         else
             # Add new entry
             entries+=("$ip    $hostname")
-            existing_hostnames["$(to_lower "$hostname")"]="$ip    $hostname"
             ((added++))
             print_success "Added: $hostname -> $ip"
         fi
