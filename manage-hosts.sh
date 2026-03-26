@@ -744,7 +744,7 @@ menu_import() {
             print_warning "Duplicate found: $hostname already exists"
             echo "Current: $duplicate_entry"
             echo "New:     $ip    $hostname"
-            read -p "Choose action: [O]verwrite / [S]kip / Skip [A]ll remaining? (o/s/a): " dup_choice
+            read -p "Choose action: [O]verwrite / [S]kip / Skip [A]ll remaining? (o/s/a): " dup_choice </dev/tty
 
             case "$(to_lower "$dup_choice")" in
                 o)
