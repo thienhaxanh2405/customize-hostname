@@ -14,8 +14,8 @@ A bash script to manage `/etc/hosts` entries for SSH and server access through a
 
 ## Requirements
 
-- macOS (tested on macOS 10.14+)
-- Bash 4.0+
+- macOS (tested on macOS 10.14+) or Linux
+- Bash 3.2+ (compatible with macOS default bash)
 - sudo/root privileges
 
 ## Installation
@@ -29,6 +29,13 @@ A bash script to manage `/etc/hosts` entries for SSH and server access through a
 2. Make the script executable:
    ```bash
    chmod +x customize-hostname/manage-hosts.sh
+   ```
+
+3. (Optional) Create your custom CSV file from the sample:
+   ```bash
+   cp customize-hostname/custom-hostnames.csv.sample customize-hostname/custom-hostnames.csv
+   # Edit with your hostnames
+   nano customize-hostname/custom-hostnames.csv
    ```
 
 ## Usage
@@ -94,7 +101,26 @@ Create backup before deleting? (y/n): y
 
 #### 5. Import from CSV
 
-Bulk import hostnames from a CSV file:
+Bulk import hostnames from a CSV file.
+
+**Quick Start with Sample File:**
+
+1. Create your CSV file from the provided sample:
+   ```bash
+   cp custom-hostnames.csv.sample custom-hostnames.csv
+   ```
+
+2. Edit `custom-hostnames.csv` with your hostnames:
+   ```bash
+   nano custom-hostnames.csv
+   ```
+
+3. Import using menu option 5:
+   ```bash
+   sudo ./manage-hosts.sh
+   # Select option 5
+   # Enter: custom-hostnames.csv
+   ```
 
 **CSV Format:**
 ```csv
@@ -103,6 +129,14 @@ dev-server.local,192.168.1.100
 staging-api.local,192.168.1.101
 test-db.local,192.168.1.102
 ```
+
+**Notes:**
+- First line must be the header: `hostname,ip`
+- One hostname per line
+- No spaces around commas
+- Use `.csv` file extension
+- The repository includes `custom-hostnames.csv.sample` as a template
+- `custom-hostnames.csv` is gitignored to keep your private IPs secure
 
 **Import Process:**
 ```
@@ -286,6 +320,31 @@ sudo ./manage-hosts.sh
 
 ## CSV Import Examples
 
+### Using the Sample File
+
+The repository includes a sample CSV file to get you started:
+
+```bash
+# 1. Copy the sample file
+cp custom-hostnames.csv.sample custom-hostnames.csv
+
+# 2. Edit with your servers
+nano custom-hostnames.csv
+
+# 3. Import via the script
+sudo ./manage-hosts.sh
+# Select option 5
+# Enter file path: custom-hostnames.csv
+```
+
+**Sample file structure (`custom-hostnames.csv.sample`):**
+```csv
+hostname,ip
+db.dataplatform.private,172.16.165.243
+api.staging.local,192.168.1.100
+web.dev.local,192.168.1.101
+```
+
 ### Basic Import File
 
 Create `my-hosts.csv`:
@@ -377,6 +436,12 @@ Created by thienhaxanh2405
 Contributions welcome! Please test thoroughly before submitting pull requests.
 
 ## Changelog
+
+### Version 1.0.1 (2026-03-26)
+- Fixed Bash 3.2 compatibility for macOS default bash
+- Added `custom-hostnames.csv.sample` template file
+- Added `.gitignore` to protect private IP addresses
+- Cross-platform support (macOS and Linux)
 
 ### Version 1.0.0 (2026-03-26)
 - Initial release
