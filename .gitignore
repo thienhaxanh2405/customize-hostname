@@ -1,0 +1,62 @@
+# AI and Development Tools
+.claude/settings.local.json
+.claude/cache/
+.claude/rules/
+.claude/skills/
+.cursor/
+.beads/
+.worktrees/
+
+# Temporary and Cache Files
+*.log
+*.tmp
+*.swp
+*.swo
+*~
+.DS_Store
+
+# IDE and Editor
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Environment and Secrets
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+secrets/
+credentials/
+
+# Dependencies
+node_modules/
+vendor/
+composer.lock
+package-lock.json
+yarn.lock
+
+# Build and Output
+dist/
+build/
+out/
+.next/
+.nuxt/
+.cache/
+
+# Testing
+coverage/
+.nyc_output/
+*.test.js.snap
+
+# Documentation (generated)
+docs/api/
+docs/build/
+
+# OS
+Thumbs.db
+desktop.ini
+
+# Project-specific
+# Add your custom ignore patterns below

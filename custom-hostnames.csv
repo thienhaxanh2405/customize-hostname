@@ -1,0 +1,6 @@
+hostname,ip
+dev-server.local,192.168.1.100
+staging-api.local,192.168.1.101
+test-db.local,192.168.1.102
+jenkins.local,192.168.1.103
+gitlab.local,192.168.1.104
