@@ -801,7 +801,40 @@ menu_import() {
     fi
 }
 
-# Menu Option 6: Clear all customize entries
+# Menu Option 6: List all hostname entries
+menu_list() {
+    echo ""
+    print_info "=== List All Hostnames ==="
+    echo ""
+
+    # Read current hosts file
+    read_hosts
+
+    # Get entries
+    local entries=()
+    if ! get_block_entries entries; then
+        print_warning "No customize block found"
+        return 1
+    fi
+
+    if [[ ${#entries[@]} -eq 0 ]]; then
+        print_warning "No entries found in customize block"
+        return 0
+    fi
+
+    local count=${#entries[@]}
+    echo "Total: $count entr$([ $count -eq 1 ] && echo 'y' || echo 'ies')"
+    echo ""
+    printf "  %-18s %s\n" "IP Address" "Hostname"
+    printf "  %-18s %s\n" "------------------" "--------------------------------"
+    for entry in "${entries[@]}"; do
+        local entry_ip=$(echo "$entry" | awk '{print $1}')
+        local entry_hostname=$(echo "$entry" | awk '{print $2}')
+        printf "  %-18s %s\n" "$entry_ip" "$entry_hostname"
+    done
+}
+
+# Menu Option 7: Clear all customize entries
 menu_clear() {
     echo ""
     print_warning "=== Clear All Customize Entries ==="
@@ -875,8 +908,9 @@ show_menu() {
     echo "║  3. Edit hostname                                          ║"
     echo "║  4. Delete hostname                                        ║"
     echo "║  5. Import from CSV                                        ║"
-    echo "║  6. Clear all customize entries                            ║"
-    echo "║  7. Exit                                                   ║"
+    echo "║  6. List all hostnames                                     ║"
+    echo "║  7. Clear all customize entries                            ║"
+    echo "║  8. Exit                                                   ║"
     echo "╚════════════════════════════════════════════════════════════╝"
     echo ""
 }
@@ -897,7 +931,7 @@ main() {
 
     while true; do
         show_menu
-        read -p "Select option (1-7): " choice
+        read -p "Select option (1-8): " choice
 
         case $choice in
             1)
@@ -916,15 +950,18 @@ main() {
                 menu_import || true
                 ;;
             6)
-                menu_clear || true
+                menu_list || true
                 ;;
             7)
+                menu_clear || true
+                ;;
+            8)
                 echo ""
                 print_success "Goodbye!"
                 exit 0
                 ;;
             *)
-                print_error "Invalid option. Please select 1-7."
+                print_error "Invalid option. Please select 1-8."
                 ;;
         esac
 
